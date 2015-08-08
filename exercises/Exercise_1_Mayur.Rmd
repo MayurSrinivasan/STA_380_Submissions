@@ -1,0 +1,665 @@
+---
+title: "STA380_Exercise1_Mayur"
+author: "Mayur Srinivasan"
+date: "7 August 2015"
+output: word_document
+---
+
+# Q1 - Exploratory analysis        
+
+## Data preparation from the given CSV
+
+```{r}
+
+
+georgia = read.csv('../data/georgia2000.csv')
+
+#Calculate the undercounts and the fraction of undercounts
+
+georgia$underCount<-georgia$ballots-georgia$votes
+georgia$underCountPerCent<-round(100*(georgia$underCount/georgia$ballots),2)
+
+
+```
+
+## Preliminary summary of data 
+
+* There are a total of `r nrow(georgia)`  counties
+
+* Out of  `r formatC(sum(georgia$ballots),format="d", big.mark=',')` ballots, `r formatC(sum(georgia$votes),format="d", big.mark=',')` were counted leading to an undercount of `r round(sum(georgia$undercount)*100/sum(georgia$ballots),2)`% in Georgia 
+
+
+* The county of `r georgia[which.max(georgia$underCount),1]` has the highest undercounts with `r formatC(max(georgia$underCount),format="d", big.mark=',')` which constitutes to `r round(100*max(georgia$underCount)/georgia[which.max(georgia$underCount),2],2)` % of the total ballots casted in the county
+
+
+```{r}
+summary(georgia)
+
+hist(georgia$underCountPerCent, main = "Undercount % Distribution ", ylab="Number of counties",xlab = "Undercount Percent",col = "red")
+
+```
+
+
+## Is Undercount dependent on the type of equipment?
+
+* An aggregate on Undercounts on the type of equipment will help us answer this
+  
+```{r}
+
+agg= aggregate(cbind(ballots,votes)~equip,data=georgia,sum)
+agg$UndercountPerc<-100*(agg$ballots-agg$votes)/(agg$ballots)
+
+
+barplot((agg$ballots-agg$votes),col="red3",main="Number of Undercounts across equipments",names.arg = agg$equip,xlab = "Equipment",ylab = "Number of Undercounts")
+
+barplot(agg$UndercountPerc,col="red3",main="% Undercounts across equipments",names.arg = agg$equip,xlab = "Equipment",ylab = "Undercount Percentage")
+
+
+```
+
+* We can observe the following from above:
+    + 'Optical' has the highest number of vote Undercounts 
+    + 'Paper' has the lowest number of vote Undercounts
+    + Undercounts as a percentage of total ballots gives us a more accurate view
+    + 'Punch' and 'Lever' have the highest Undercount percentages
+
+## Is there a relation between Undercount % and the economic status of the counties?
+
+```{r}
+
+poorg<-georgia[georgia$poor==1,]
+
+econpoor=aggregate(cbind(ballots,votes)~equip,data=poorg,sum)
+econpoor$UndercountPerc<-100*(econpoor$ballots-econpoor$votes)/(econpoor$ballots)
+
+richg<-georgia[georgia$poor==0,]
+
+econrich=aggregate(cbind(ballots,votes)~equip,data=richg,sum)
+econrich$UndercountPerc<-100*(econrich$ballots-econrich$votes)/(econrich$ballots)
+
+econrich=rbind(econrich,c("PAPER",0,0,0))
+econrich=rbind(econrich[1:2,],econrich[4,],econrich[3,])
+
+barplot(matrix(c(as.numeric(econpoor$UndercountPerc),as.numeric(econrich$UndercountPerc)),nr=2, byrow =  TRUE), beside=T, col=c("red3","grey"),names.arg=econpoor$equip,xlab="Equipment",ylab="% Undercount",main="Poor vs Rich Undercount")
+
+legend("top", c("Poor","Rich"), pch=15, 
+       col=c("red3","grey"))
+
+```
+
+* The Undercount percentage is higher for Poor counties than the Rich counties across all types of equipment. The effect is particularly pronounced for 'Optical' and 'Paper' equipment 
+
+
+
+```{r fig.width=10, fig.height=6.5}
+
+
+attach(georgia)
+
+plot(x=perAA,y=underCountPerCent,main="Does AA% relate to Undercount %?",pch=19,col=c("red3","blue3","green3","yellow3")[equip],xlab="AA Population",ylab="Undercount %")
+
+legend(x="top", legend = levels(georgia$equip), col=c("red3","blue3","green3","yellow3"), pch=19)
+
+detach(georgia)
+```
+
+* We observe a very weak (but non-zero) correlation between the percentage of American Popuulations in counties and the corresponding Undercount % in those counties
+* Further, we don't see a significant effect of the type of equipment on the Undercount % as a function of the AA Population %
+* Counties with a higher proportion of AA population have more 'Lever' equipments than any other type of equipment
+
+# Question 2 - Bootstrapping
+
+## Data Preparation for the five given asset classes
+
+```{r message=FALSE, warning=FALSE, include= FALSE}
+
+library(mosaic)
+library(fImport)
+library(foreach)
+
+set.seed(1)
+
+mystocks = c("SPY", "TLT", "LQD", "EEM", "VNQ")
+myprices = yahooSeries(mystocks, from='2010-08-01', to='2015-08-01')
+
+# A helper function for calculating percent returns from a Yahoo Series
+
+YahooPricesToReturns = function(series) {
+  mycols = grep('Adj.Close', colnames(series))
+  closingprice = series[,mycols]
+  N = nrow(closingprice)
+  percentreturn = as.data.frame(closingprice[2:N,]) / as.data.frame(closingprice[1:(N-1),]) - 1
+  mynames = strsplit(colnames(percentreturn), '.', fixed=TRUE)
+  mynames = lapply(mynames, function(x) return(paste0(x[1], ".PctReturn")))
+  colnames(percentreturn) = mynames
+  as.matrix(na.omit(percentreturn))
+}
+myreturns = YahooPricesToReturns(myprices)
+```
+
+The risk and return for every asset class can be gauged from the following metrics: 
+* Average return on investment for that asset class alone
+* Value at risk  
+
+For example, bootstrapping the returns for **SPY** alone can be done as follows :
+
+```{r}
+sim_SPY = foreach(i=1:500, .combine='rbind') %do% {
+  totalwealth = 100000
+  n_days = 20
+  weights_even = c(1.0, 0.0, 0.0, 0.0, 0.0)
+  holdings = weights_even * totalwealth
+  wealthtracker = rep(0, n_days)
+  for(today in 1:n_days) {
+    return.today = resample(myreturns, 1, orig.ids=FALSE)
+    holdings = holdings + holdings*return.today
+    totalwealth = sum(holdings)
+    wealthtracker[today] = totalwealth
+    holdings = weights_even * totalwealth
+  }
+  wealthtracker
+}
+
+```
+
+The Average return for SPY is `r mean(sim_SPY[,n_days])` and the (loss) value at risk is `r quantile(sim_SPY[,n_days], 0.05) - 100000`.
+
+When this exercise is repeated for all the asset classes individually, we see the following relative pattern:
+
+Asset Class  | Risk       | Return
+-------------|------------|--------
+EEM          | Very High  | High
+VNQ          | High       | High
+SPY          | Medium     | Medium
+TLT          | Low        | Medium
+LQD          | Very Low   | Low
+
+With the above learning, various portfolios can be created with varying proportions of the risky and safe assets
+
+## Even Split Portfolio
+As the name suggests, the even splot portfolio will have an equitable distribution of the the everyday starting wealth across all five asset classes. The code will be similar to the one above for **SPY** alone, with changes only in the proportions of each asset class
+
+```{r}
+sim_even = foreach(i=1:500, .combine='rbind') %do% {
+  totalwealth = 100000
+  n_days = 20
+  weights_even = c(0.2, 0.2, 0.2, 0.2, 0.2)
+  holdings = weights_even * totalwealth
+  wealthtracker = rep(0, n_days)
+  for(today in 1:n_days) {
+    return.today = resample(myreturns, 1, orig.ids=FALSE)
+    holdings = holdings + holdings*return.today
+    totalwealth = sum(holdings)
+    wealthtracker[today] = totalwealth
+    holdings = weights_even * totalwealth
+  }
+  wealthtracker
+}
+```
+
+The Average return for the even split portfolio is `r mean(sim_even[,n_days])` and the (loss) value at risk is `r quantile(sim_even[,n_days], 0.05) - 100000`.
+
+## Safe Portfolio
+A safe portfolio will feature the safe asset classes dominantly. To take an extreme example, and given the constraints to use at least three asset classes, we can take the top three safest classes with a heavy bias towards the safest of the three. Hence, assigning 10% each to SPY and TLT, and 80% to the safest class, LQD, we get the following
+
+```{r}
+sim_safe = foreach(i=1:500, .combine='rbind') %do% {
+  totalwealth = 100000
+  n_days = 20
+  weights_even = c(0.1, 0.1, 0.8, 0.0, 0.0)
+  holdings = weights_even * totalwealth
+  wealthtracker = rep(0, n_days)
+  for(today in 1:n_days) {
+    return.today = resample(myreturns, 1, orig.ids=FALSE)
+    holdings = holdings + holdings*return.today
+    totalwealth = sum(holdings)
+    wealthtracker[today] = totalwealth
+    holdings = weights_even * totalwealth
+  }
+  wealthtracker
+}
+```
+
+The Average return for the even split portfolio is `r mean(sim_safe[,n_days])` and the (loss) value at risk is `r quantile(sim_safe[,n_days], 0.05) - 100000`.
+
+## Risky Portfolio
+A risky portfolio will feature the high-risk asset classes dominantly. To take an extreme example, and given the constraints to use at least two asset classes, we can take the top two riskiest classes with a heavy bias towards the riskiest of the two. Hence, assigning 30% each to VNQ, and 70% to the riskiest class, EEM, we get the following
+
+```{r}
+sim_risk = foreach(i=1:500, .combine='rbind') %do% {
+  totalwealth = 100000
+  n_days = 20
+  weights_even = c(0.0, 0.0, 0.0, 0.7, 0.3)
+  holdings = weights_even * totalwealth
+  wealthtracker = rep(0, n_days)
+  for(today in 1:n_days) {
+    return.today = resample(myreturns, 1, orig.ids=FALSE)
+    holdings = holdings + holdings*return.today
+    totalwealth = sum(holdings)
+    wealthtracker[today] = totalwealth
+    holdings = weights_even * totalwealth
+  }
+  wealthtracker
+}
+```
+
+The Average return for the even split portfolio is `r mean(sim_risk[,n_days])` and the (loss) value at risk is `r quantile(sim_risk[,n_days], 0.05) - 100000`.
+
+From the average return and value at risk values of each of the portfolios we can see that an aggressive/risky portfolio offers a marginally higher average return in the long run, but it also comes at the cost of a higher risk involved, as quanitfied by the high (loss) value at risk. On the other hand, a safe portfolio offers a conservative average return, but a lower value at risk.
+
+The spread of returns as a result of the bootstrap corroborates the idea above. Below, we can see that the returns are more/less volatile around the average for the agressive/safe portoflio respectively.
+
+```{r echo= FALSE}
+mybreaks = seq(75000, 125000, by=2000)
+par(mfrow=c(3,1), mar=c(3,0,1,3), mgp=c(2,1,0))
+hist(sim_even[,n_days], breaks=mybreaks, main ='',border="darkgrey", col="grey", axes=FALSE, ylim=c(0, 100), xlab ='')
+abline(v=mean(sim_even[,n_days]), col ='red')
+text(110000, 75, "Even Split", pos=4, font=4)
+hist(sim_safe[,n_days],breaks=mybreaks,main = "" ,axes = FALSE,xlab ='',border=rgb(100,0,0,100,maxColorValue=255), col= rgb(100,0,0,50,maxColorValue=255))
+abline(v=mean(sim_safe[,n_days]), col ='red')
+text(110000, 75, "Safe Split", pos=4, font=4)
+hist(sim_risk[,n_days],breaks=mybreaks,main = "" ,xlab ='Average Return', border=rgb(0,100,0,100,maxColorValue=255), col= rgb(0,100,0,50,maxColorValue=255))
+abline(v=mean(sim_risk[,n_days]), col ='red')
+text(110000, 75, "Risky Split", pos=4, font=4)
+```
+
+
+The much larger tail of the risky split, characterises the volatility and high value at risk of such a portfolio. The even split presents the neutral spread of returns over time 
+
+# Q3 - Clustering and PCA        
+
+## Data preparation from the given CSV
+
+```{r, echo=FALSE}
+library(ggplot2)
+
+```
+
+```{r}
+wine<- read.csv("../data/wine.csv")
+Z = wine[,1:11]
+```
+
+## Principal Component Analysis - Does it distinguish Red and White wines?
+
+We will now run a Principal Component Analysis on the features of the dataset
+
+```{r, echo=FALSE}
+pc1 = prcomp(Z, center.=TRUE,scale.=TRUE)
+```
+We will now look at the summary of PCA
+```{r}
+summary(pc1)
+par( mfrow = c( 1,1  ) )
+plot(pc1,type="line", main = "Variance versus PC#s")
+```
+
+From the cumulative proportion of variance, we can infer that the first 4 principal components can explain 75% of the total variance of all variables. We can choose PC1 through PC4 to proceed further
+
+We now obtain the loadings for each of the PCs
+
+```{r, echo=FALSE}
+loadings = pc1$rotation
+loadings
+```
+
+The alphas for both PC1 and PC2 are plotted against each other to observe any obvious clusters/differentiators
+
+```{r, echo=FALSE}
+scores = pc1$x
+par( mfrow = c( 1,1  ) )
+qplot(scores[,1], scores[,2],color=wine$color,alpha=I(0.5), xlab='PC1', ylab='PC2')
+
+```
+
+Similar to the 'Congressmen' dataset that we discussed in class, we see that PC1 is an excellent classifier/discriminator to identify Red versus White wine
+
+To check the validity of features that go into PC1, we can check if the varibales with the highest and lowest loadings in PC1, are 'dominant' variables to determine if a wine is red or white (from the data)
+
+First, we find the variables with the highest and lowest loadings as below:
+
+```{r}
+o1 = order(loadings[,1])
+colnames(Z)[head(o1,3)]
+colnames(Z)[tail(o1,3)]
+
+```
+
+From above we can conclude that:
+* "volatile.acidity", "sulphates", and "chlorides" are the most important variables for one group (red wine)
+* "residual.sugar", "free.sulfur.dioxide", and "total.sulfur.dioxide" are the most important variables for another group (white wine)
+
+We can test if some of these variables indeed discriminate well between red and white wine using basic boxplots as below:
+
+```{r, echo=FALSE}
+wine_center <- wine
+wine_center$color <- NULL
+wine_center <- scale(wine_center, center=TRUE, scale=TRUE)
+
+par( mfrow = c(1,2))
+
+boxplot(wine_center[,2] ~wine$color, xlab='volatile.acidity', ylab='color',main='Red has high volatile.acidity')
+
+boxplot(wine_center[,7] ~wine$color,xlab='total.sulfur.dioxide', ylab='color',main='White has higher TSD')
+
+```
+
+The 'loss' that we incur from using PC1, by way of dropping/ignoring some variables can also be validated using the same view. We can pick up the most important varibales from the second principal component, and check if they have any discriminatory power on the wine color
+
+
+```{r}
+
+o2 = order(loadings[,2])
+colnames(Z)[head(o2,3)]
+colnames(Z)[tail(o2,3)]
+
+```
+
+'alcohol' is a feature that is important in PC2, and is not a dominant part of PC1. We can test the same in the boxplot below:
+
+```{r, echo=FALSE}
+
+par( mfrow = c( 1,1  ) )
+
+boxplot(wine_center[,11] ~wine$color,
+        xlab='alcohol', ylab='color',
+        main='Red and White have similar alcohol values')
+
+
+```
+
+
+## Can PCA tell us about the quality of wine as well?
+
+We can plot the alphas for PC1 versus PC2 again and color code it with the qine quality data to see if PC1 or PC2 are able to distinguish the data points to the 7-point quality scale
+
+```{r}
+par(mfrow = c(1,2))
+qplot(scores[,1], scores[,2],color=wine$quality, xlab='PC1', ylab='PC2')
+qplot(scores[,2], scores[,3],color=wine$quality, xlab='PC2', ylab='PC3')
+
+```
+
+As can be seen above, PC1 versus PC2, and even PC2 versus PC3 are not able to identify the various quality scales properly.
+
+This indicates that a different clustering methid might be useful to identify the quality scales
+
+## Hierarchical clustering - Does it distinguish Red and White wines?
+
+We first scale the data from the wine dataset
+
+```{r, echo=FALSE}
+
+wine_scaled <- scale(Z, center=TRUE, scale=TRUE) 
+
+```
+
+The pairwise distance matrix for the scaled dataset is calculated and input into the hclust fucntion to compute the dendrogram
+*NOTE : if the 'ward' method doesn't work, please use 'ward.D'. It's a R version issue*
+
+```{r}
+par(mfrow =c(1,1))
+wine_distance_matrix = dist(wine_scaled, method='euclidean')
+wine_dend = hclust(wine_distance_matrix, method='ward')
+plot(wine_dend, cex=0.8)
+
+```
+
+Reviewing the dendrogram, we can say that k=4 is a reasonable height to cut the dendrogram at
+
+```{r}
+cluster1 = cutree(wine_dend, k=4)
+summary(factor(cluster1))
+```
+
+We can check the homogenity of the clusters by looking at the proportions of each color wine in each of the clusters as below:
+
+```{r}
+"Cluster 1"
+table(wine[which(cluster1 == 1),13])
+"Cluster 2"
+table(wine[which(cluster1 == 2),13])
+"Cluster 3"
+table(wine[which(cluster1 == 3),13])
+"Cluster 4"
+table(wine[which(cluster1 == 4),13])
+```
+
+We notice that this Hierarchical Cluster is a good discriminator of Red and White wine
+
+## Can Hierarchical Clustering tell us about the quality of wine as well?
+
+Similar to the exercise above, we can look at the distribution of wine quality scales across the different clusters to see if we find any obvious patterns
+
+```{r}
+"Cluster 1"
+table(wine[which(cluster1 == 1),12])
+"Cluster 2"
+table(wine[which(cluster1 == 2),12])
+"Cluster 3"
+table(wine[which(cluster1 == 3),12])
+"Cluster 4"
+table(wine[which(cluster1 == 4),12])
+```
+
+We see that there are no obvious proportions and trends that stand out in the clusters that indicate identification of wine quality
+
+**In conclusion, we can say that PCA helped us in identifying Red versus White wine using just the first principal component. Hierachical Clustering also gave promising results by way of accurately identifying the White and Red wines. Both PCA and Hierarchical Clustering failed to identify the wine quality scales though**
+
+# Question 4 - Market segmentation
+
+## Data Preparation for before analysis
+
+We first red in the data from the input CSV
+
+```{r echo = FALSE}
+library(ggplot2)
+
+twit = read.csv("../data/social_marketing.csv", header=TRUE, row.names=1)
+```
+
+We will now convert the tweet counts to proportions across tweet categories to normalize the data. This helps to negate any effects of people who tweet often (high tweet counts) across one or many topics
+
+```{r}
+Z = twit/rowSums(twit)
+```
+
+We now look to treat the adult and spam variables to identify any bots that might have creeped into the data despite the filters mentioned in the question. As a general rule, I will supress the records that have greater than average representation of adult and spam related tweets i.e., accounts that tweet on adult and spam themes more than the sample average number of times, will be excluded from further analysis
+
+```{r}
+avg_adult = mean(Z[,'adult'])
+avg_spam = mean(Z[,'spam'])
+Z_New = Z[which(Z$adult < avg_adult & Z$spam < avg_spam),]
+Z_New$spam <- NULL
+Z_New$adult <- NULL
+```
+
+This may seem harsh for genuine users who tweet adult stuff occassinally, but they cannot be easily distinguished from, say, 'new' spam/adult bots i.e., bots that haven't tweeted
+
+## How can we make user clusters - K-means clustering
+
+As the objective of this exercise is to achieve targeted marketing-viable segments of customers, we should ideally look for clustering methods to identify disparate segments first and then characterise them using latent factor methods such as PCA
+
+As we do not have a particular number of segments in mind, we can use the CH Index method below to set the benchmark
+
+```{r}
+
+kmax= 15
+
+n = nrow(Z_New)
+ch = numeric(length=kmax-1)
+
+for (k in (2:kmax))
+{
+  km =kmeans (Z_New, k, nstart =50)
+  with = km$tot.withinss
+  betw = km$betweenss
+  ch[k-1] = (betw/(k-1))/(with/(n-k))
+  
+}
+
+plot(2:kmax,ch, xlab='K', ylab='CH Index', type='b',main='CH Index versus k' )
+
+```
+
+
+The plot shows that k=6 should be ideal for this particular case, as the CH Index decreases after that drastically (3 clusters will be too small for a dataset of this magnitude)
+
+Next, we run k-means clustering on the cleaned data to obtain the 6 clusters. We then add the cluster labels generated to our input cleaned data for further analysis
+
+```{r}
+cluster_all <- kmeans(Z_New, centers=6, nstart=25)
+Z_New$cluster <- cluster_all$cluster
+```
+
+* To characterise these clusters we can:
+ + Pick up the variables that have the highest means in each of the clusters
+ + Perform a PCA on each of the clusters to glean any latent factors that exist in them
+ 
+# Principal Components of each cluster using PCA
+
+* After we've obtained the 6 clusters, we can analyse the 'most important' factors to characterise the cluster. This can be done in two ways:
+ + Pick up the variables with the highest column means to select the most well-represented variables in that cluster
+ + Perform a PCA on the cluster to find the variables with the highest loadings
+ 
+The two methods above are related and will likely give the same result, hence we'll use PCA to gain additional insights
+
+For each cluster, we observe the variables with the highest absolute loadings
+
+## Cluster 1
+
+```{r}
+cluster1 = subset(Z_New, cluster == 1)
+
+pc1 = prcomp(cluster1)
+
+summary(pc1)
+loadings1 = pc1$rotation
+o1 = order(loadings1[,1])
+
+colnames(cluster1)[head(o1,5)]
+colnames(cluster1)[tail(o1,5)]
+
+#The key attributes for this cluster are :
+#"chatter" "current_events" "travel" "photo_sharing" "shopping" (Ignoring #"uncategorized")
+
+
+
+```
+
+**This cluster is opinionated and is out-going. It is also seems very receptive and hence present a low-hanging fruit opportunity for social/physical engagement, say, outside the domain on Twitter -- malls, outdoor events etc.**
+
+"chatter" and "photo_sharing" are attributes that are shared by almost all clusters by virtue of how peopel generally tweet
+
+**Hence, we can treat "chatter" and "photo_sharing" as engagement metrics instead of classification metrics i.e., we can use it to classify a cluster as "being receptive"
+or "being passive/blind to marketing"
+
+## Cluster 2
+
+```{r}
+cluster2 = subset(Z_New, cluster == 2)
+
+pc2= prcomp(cluster2)
+
+loadings2 = pc2$rotation
+o2 = order(loadings2[,1])
+
+colnames(cluster2)[head(o2,5)]
+colnames(cluster2)[tail(o2,5)]
+
+#The key attributes for this cluster are :
+#"news", "automotive", "travel", "politics"
+
+```
+ 
+**This cluster represents the user that consumes and has opinions on news items across the range of topics. This user base should ideally be receptive to associations with news sites/longforms/op-eds** 
+
+## Cluster 3
+
+```{r}
+cluster3 = subset(Z_New, cluster == 3)
+
+pc3= prcomp(cluster3)
+
+loadings3 = pc3$rotation
+o3 = order(loadings3[,1])
+
+colnames(cluster3)[head(o3,5)]
+colnames(cluster3)[tail(o3,5)]
+
+#The key attributes for this cluster are :
+#"sports_fandom", "religion", "parenting", "tv_film"
+
+
+
+```
+**This cluster represents the head of the family who also values nutrition (as a product of parenting). Our client should ideally involve this segment in community-related online activities and focus on family well-being through nutrition in its marketing materials**
+
+
+## Cluster 4
+
+```{r}
+cluster4 = subset(Z_New, cluster == 4)
+
+pc4= prcomp(cluster4)
+
+loadings4 = pc4$rotation
+o4 = order(loadings4[,1])
+
+colnames(cluster4)[head(o4,5)]
+colnames(cluster4)[tail(o4,5)]
+
+#The key attributes for this cluster are :
+#"online_gaming", "fcollege_uni", "sports_playing", "tv_film", "music"
+
+
+
+```
+
+**This cluster represents the student population that is heavily immersed in popular culture. This insight can be used to flavour the marketing materials with a focus on college and should ideally respond to campaigns that reference popular media**
+
+## Cluster 5
+
+```{r}
+cluster5 = subset(Z_New, cluster == 5)
+
+pc5= prcomp(cluster5)
+
+loadings5 = pc5$rotation
+o5 = order(loadings5[,1])
+
+colnames(cluster5)[head(o5,5)]
+colnames(cluster5)[tail(o5,5)]
+
+#The key attributes for this cluster are :
+#"beauty", "cooking", "fashion", "travel"
+
+```
+
+**This cluster represents the presumably female segment of our client's twitter followers and hence the marketing messaging can be targeted towards female health issues and can be dominated by any offerings** 
+
+
+
+## Cluster 6
+
+```{r}
+cluster6 = subset(Z_New, cluster == 6)
+
+pc6= prcomp(cluster6)
+
+loadings6 = pc6$rotation
+o6 = order(loadings6[,1])
+
+colnames(cluster6)[head(o6,5)]
+colnames(cluster6)[tail(o6,5)]
+
+#The key attributes for this cluster are :
+#"health_nutrition", "personal_fitness", "shopping", "food", "cooking"
+
+```
+
+**This cluster represents the segment that is serious about health and nutrition and also shops online (probably for healthy cooking related items). The verbage for any marketing for this cluster can include more technical specifications than other cluster**
+
+
+
+
