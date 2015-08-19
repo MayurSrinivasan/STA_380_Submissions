@@ -1,0 +1,387 @@
+---
+title: "Q1"
+author: "Mayur Srinivasan"
+date: "19 August 2015"
+output: word_document
+---
+# Q1
+
+We will first load a set of libraries that will help us plot shape files on R
+
+```{r warning=FALSE, message = FALSE}
+library(rgeos)
+library(maptools)
+```
+
+We then read in the shape file for US at a State level
+
+```{r}
+np_dist <- readShapeSpatial("../data/USA_adm/USA_adm1.shp")
+plot(np_dist)
+
+
+library(ggplot2)
+np_dist <- fortify(np_dist, region = "NAME_1")
+```
+
+We use another external file, "IATA_STATE" to use an IATA-to-State mapping. This will be used subsequently for mapping
+
+```{r}
+IATA <- read.csv("../data/IATA_STATE.csv", header = TRUE)
+AB <- read.csv("../data/ABIA.csv", header = TRUE)
+```
+
+We then merge these two datasets together to get the Arrival and Destination States for the corresposnding IATA codes (Airports)
+
+```{r}
+total <- merge(AB,IATA[ , c("Origin", "State")],by="Origin", all.x = TRUE)
+total <- merge(total,IATA[ , c("Dest", "State")],by="Dest", all.x = TRUE)
+```
+
+We then divide the data into 4 disjoint parta for analysis
+  * Arrivals into ABIA in the first half (Months 1 to 6) of 2008
+  * Arrivals into ABIA in the second half of 2008
+  * Departures from ABIA in the first half (Months 1 to 6) of 2008
+  * Departures from ABIA in the second half of 2008
+```{r}
+library(plyr)
+total_new <- ddply(total[total$Month<=6 & total$Dest =='AUS',], .(State.x), summarize, StateMean = mean(ArrDelay,na.rm = TRUE))
+total_new1 <- ddply(total[total$Month>6 & total$Dest =='AUS',], .(State.x), summarize, StateMean = mean(ArrDelay,na.rm = TRUE))
+total_new2 <- ddply(total[total$Month<=6 & total$Origin =='AUS',], .(State.y), summarize, StateMean = mean(DepDelay,na.rm = TRUE))
+total_new3 <- ddply(total[total$Month>6 & total$Origin =='AUS',], .(State.y), summarize, StateMean = mean(DepDelay,na.rm = TRUE))
+
+```
+
+
+We are interested in analysing the mean delays (in minutes) in all 4 groups above
+
+Below, we calculate the centres of the States to diplay the names ofa few big states as a means of a complimentary legend
+
+```{r warning= FALSE, message= FALSE}
+
+distcenters <- ddply(np_dist, .(id), summarize, clat = 1.05*mean(lat), clong = mean(long))
+
+distcenters <- subset(distcenters, id == 'Texas' | id == 'California'| id =='Alabama'| id=='Oklahoma' | id =='Washington' | id == 'Illinois' | id == 'Florida')
+
+```
+
+We first plot the Arrivals into ABIA in H1 '08
+
+```{r warning= FALSE, message= FALSE}
+
+ggplot() + geom_map(data = total_new, aes(map_id = State.x, fill = StateMean),
+map = np_dist) + expand_limits(x = np_dist$long, y = np_dist$lat) +  coord_cartesian(xlim = c(-135,-60),ylim = c(15,60)) +  scale_fill_gradient2(low = "white", midpoint = 0, high = "red", limits = c(-3, 36)) + 
+geom_text(data = distcenters, aes(x = clong, y = clat, label = id, size = 0.1)) + 
+ggtitle("Arrival-into-ABIA Delays H1 '08") +
+theme(plot.title = element_text(family = "Trebuchet MS", color="#666666", face="bold", size=14, hjust=0))
+
+```
+
+
+```{r warning= FALSE, message= FALSE}
+ggplot() + geom_map(data = total_new1, aes(map_id = State.x, fill = StateMean),
+map = np_dist) + expand_limits(x = np_dist$long, y = np_dist$lat) +  coord_cartesian(xlim = c(-135,-60),ylim = c(15,60)) +  scale_fill_gradient2(low = "white", midpoint = 0, high = "red", limits = c(-3, 36)) + 
+geom_text(data = distcenters, aes(x = clong, y = clat, label = id, size = 0.1)) + 
+ggtitle("Arrival-into-ABIA Delays H2 '08") +
+theme(plot.title = element_text(family = "Trebuchet MS", color="#666666", face="bold", size=14, hjust=0))
+
+```
+
+```{r warning=FALSE, message= FALSE}
+ggplot() + geom_map(data = total_new2, aes(map_id = State.y, fill = StateMean),
+map = np_dist) + expand_limits(x = np_dist$long, y = np_dist$lat) +  coord_cartesian(xlim = c(-135,-60),ylim = c(15,60)) +  scale_fill_gradient2(low = "white", midpoint = 0, high = "red", limits = c(0, 130)) + 
+geom_text(data = distcenters, aes(x = clong, y = clat, label = id, size = 0.1)) + 
+ggtitle("Departure-from-ABIA Delays H1 '08") +
+theme(plot.title = element_text(family = "Trebuchet MS", color="#666666", face="bold", size=14, hjust=0))
+
+```
+
+```{r warning=FALSE, message= FALSE}
+
+ggplot() + geom_map(data = total_new3, aes(map_id = State.y, fill = StateMean),
+map = np_dist) + expand_limits(x = np_dist$long, y = np_dist$lat) +  coord_cartesian(xlim = c(-135,-60),ylim = c(15,60)) +  scale_fill_gradient2(low = "white", midpoint = 0, high = "red", limits = c(0, 130)) + 
+geom_text(data = distcenters, aes(x = clong, y = clat, label = id, size = 0.1)) + 
+ggtitle("Departure-from-ABIA Delays H2 '08") +
+theme(plot.title = element_text(family = "Trebuchet MS", color="#666666", face="bold", size=14, hjust=0))
+
+```
+
+
+# Q2
+
+## Naive Bayes Model
+
+
+We first load the tm library and execute the wrapper function to utilise the 'read files' utilities. This helps in reading and arranging all the input text files
+
+```{r warning= FALSE, message= FALSE}
+library(tm)
+
+readerPlain = function(fname){
+  readPlain(elem=list(content=readLines(fname)), 
+            id=fname, language='en') }
+```
+We first read in all the filenames from the Train and Test folder separately. The filenames are then collected and appended in a vector that is subsequently used by the readerPlain function to produce a corpus
+
+**Please note that we take BOTH the Train and Test data to form the DocumentTermMatric. This has been done to account for any new words/tokens that we might encounter in the Test data that is not part of the DTM of the Train data. It also ensures that the terms that are 'jointly sparse' i.e., Test terms that might be classified as sparse in comparison to Train data, are dealt with properly**
+
+```{r}
+
+author_dirs1 = Sys.glob('../data/ReutersC50/C50train/*')
+author_dirs2 = Sys.glob('../data/ReutersC50/C50test/*')
+
+file_list1 = NULL
+file_list2 = NULL
+labels = NULL
+labels1 = NULL
+labels2 = NULL
+
+for(author in author_dirs1) {
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  file_list1 = append(file_list1, files_to_add)
+}
+
+for(author in author_dirs2) {
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  file_list2 = append(file_list2, files_to_add)
+}
+
+file_list3 = append(file_list1,file_list2)
+```
+
+Please note that the order in which the append happens is important because we want to ensure that the order of filenames and the subsequent corpus remains at the **"Test/Train X Author X Article"** level
+
+We also extract the Author names from the directory names. This is useful to denote any author-level variables that we define later
+
+```{r}
+for(author in author_dirs1) {
+  author_name = substring(author, first=29)
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  labels1 = append(labels1, rep(author_name, length(files_to_add)))
+}
+
+for(author in author_dirs2) {
+  author_name = substring(author, first=28)
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  labels2 = append(labels2, rep(author_name, length(files_to_add)))
+}
+
+labels <- unique(append(labels1, labels2))
+```
+
+
+Next, we extract the corpus using the readerPlain function and the mega-filelist that we compiled earlier. The corpus is alos put throuhg some basic cleaning using the utilities provided within tm. This helps in addressing any redundancies and limits the noise-chasing that might occur with the subsequent model
+
+```{r}
+
+all_docs = lapply(file_list3, readerPlain) 
+names(all_docs) = file_list3
+names(all_docs) = sub('.txt', '', names(all_docs))
+
+my_corpus = Corpus(VectorSource(all_docs))
+names(my_corpus) = names(all_docs)
+
+# Preprocessing
+my_corpus = tm_map(my_corpus, content_transformer(tolower)) # make everything lowercase
+my_corpus = tm_map(my_corpus, content_transformer(removeNumbers)) # remove numbers
+my_corpus = tm_map(my_corpus, content_transformer(removePunctuation)) # remove punctuation
+my_corpus = tm_map(my_corpus, content_transformer(stripWhitespace)) ## remove excess white-space
+my_corpus = tm_map(my_corpus, content_transformer(removeWords), stopwords("SMART"))
+
+DTM = DocumentTermMatrix(my_corpus)
+DTM
+```
+
+As expected, the sparsity of the Document Terms matrix is very high for any meaningful next step. We can use the inbuilt tm functionality of reduce the sparsity by a defined parameter
+
+```{r}
+DTM = removeSparseTerms(DTM, 0.975)
+DTM
+```
+
+Next, the DTM is cnoverted to a data matrix, and the Train data is separated from the entire DTM. We then calculate the 'weight vector' for each Author after Laplace smoothing. These are the word/token level weights (for each author) that are multiplied with the word frequencies in the Test data to calculate the log probabilities eventually
+
+The weight vector for each Author is named **"w_<Author Name>"**
+
+```{r}
+
+X = as.matrix(DTM)
+
+X_train <- X[1:2500,]
+labels <- unique(labels)
+smooth_count = 1/nrow(X_train)
+
+for(i in 1:50) 
+{ 
+  nam1 <- paste("w",labels[i], sep = "_")
+  temp <- colSums(X_train[(50*i-49):(50*i),] + smooth_count)
+  assign(nam1, temp/sum(temp))
+}
+
+```
+
+We then 'predict' the author name on the Test data by calculating the log probabilities for each document across all authors and finding the highest value
+
+```{r}
+
+X_test <- X[2501:5000,]
+
+result = matrix(, nrow = 2500, ncol = 51)
+for(i in 1:2500) 
+{ for(j in 1:50)
+ {
+  nam1 <- paste("w",labels[j], sep = "_")
+  #check <- log(get(nam1))
+  result[i,j] = sum(X_test[i,]*log(get(nam1)))
+ }
+}
+
+result[1:5,1:10]
+```
+
+We then append the predicted authors to the results dataset and then form a new dataset containing only the original author and the predicted author
+
+```{r}
+for (i in 1:2500)
+{
+  result[i,51] = which.max(result[i,])
+}
+
+result1 = NULL
+result1 = cbind((rep(1:50, each=50)),result[,51])
+result1$auth <- rep(1:50, each=50)
+result1$pred_auth <- result[,51]
+```
+
+We then predict the accuracy of classification using the confusionMatrix utility of caret. This also provides the accuracy for each of the authors
+
+```{r}
+library(caret)
+confusionMatrix(result1$pred_auth,result1$auth)
+
+```
+
+We can see that the overall accuracy rate of the Naive-Bayes classifier based on the articles is around 60% i.e., on an average 60% of the articles were correctly classified to their actual authors
+
+We can also use these accuracy scores to find authors where the accuracy scores were low, and hence indicate that the other author that is most frequently predicted, has similar latent features according to the model and writes on similar subjects/topics
+
+For example, from the confusion matrix we can observe that author 8 and author 49 have similar topics. A brief inspection does show that author 8 (David Lawder) and author 49 (Todd Nissen) write on the automobile industry with similar number of mentions of terms like 'Ford', 'auto', 'Detroit', 'car' etc.
+
+
+We now test another classifier to see if we gain any Test accuracy. We first convert the data matrix to a dataframe to be used in subsequent models
+
+```{r}
+auth = rep(rep(1:50,each=50),2)
+author = as.data.frame(X)
+colnames(author) = make.names(colnames(author))
+str(author)
+author$auth=auth
+author$auth=as.factor(author$auth)
+```
+
+The data is then divided into Train and Test as below:
+
+```{r}
+author_train=author[1:2500,]
+author_test=author[2501:5000,]
+
+```
+
+We then run a Random Forest model on the Train data and test is on the Test data
+
+```{r}
+library(randomForest)
+
+set.seed(1)
+authorRF=randomForest(auth~.,data=author_train)
+preds=predict(authorRF,newdata=author_test)
+confusionMatrix(preds,author_test$auth)
+```
+
+# Q3
+
+We first load the arules library for the apriori calculation
+
+```{r,warning=FALSE, message=FALSE}
+
+library(arules) 
+
+```
+
+We then read in the data at the transaction level, add a Transaction ID to identify them, as well as stack the data to bring it to a format that the subsequent split can understand
+
+```{r, warning=FALSE}
+
+coln= max(count.fields("../data/groceries.txt",sep=','))
+groc <- read.csv("../data/groceries.txt", header = FALSE,col.names = paste0("V",seq_len(coln)),fill = TRUE)
+
+groc$ID<-seq.int(nrow(groc))
+
+groc[groc==''] <- 'Not Available'
+
+out <- reshape(groc, direction = "long", idvar="ID", 
+               varying=(1:ncol(groc)-1), sep = "")
+
+
+out <- out[order(out$ID),]
+out$time <- NULL
+out <- na.omit(out)
+
+
+out$ID <- factor(out$ID)
+
+```
+
+We then split the data across each transaction and de-deuplicate the same to remove any similar transaction itemsets. The data is then cast into the 'transactions' class of arules
+
+```{r}
+
+
+# First split data into a list of items for each transaction
+out <- split(x=out$V, f=out$ID)
+
+## Remove duplicates ("de-dupe")
+out <- lapply(out, unique)
+
+## Cast this variable as a special arules "transactions" class.
+outtrans <- as(out, "transactions")
+
+
+# Now run the 'apriori' algorithm
+# Look at rules with support > .05 & confidence >.5 
+outrules <- apriori(outtrans, parameter=list(support=.05, confidence=.5, maxlen=5))
+                         
+# Look at the output
+inspect(outrules)
+
+```
+
+We can see that the thresholds for support and confidence used above are not enough to generate any significant rules. None of the itemsets generated above are well-represented at the given level and their 'consequents' are signigicant enough to follow from the 'antecedents'
+
+We can reduce the minimum supoprt threshold to increase the base of itemsets considered
+
+```{r}
+
+# Look at rules with support > .01 & confidence >.5 & length (# items) <= 4
+outrules1 <- apriori(outtrans, parameter=list(support=.01, confidence=.5, maxlen=5))
+                           
+# Look at the output
+inspect(outrules1)
+
+
+```
+
+We notice that the change in support generated some rules at the 0.5 level of confidence. We can inspect futher to find rules that have a higher level of significance (conditional probablity of rule being true given an itemset is true) OR have a higher lift (increase in the conditional probability of a 'consequent')
+
+```{r}
+inspect(subset(outrules1, subset=confidence > 0.55))
+inspect(subset(outrules1, subset=lift > 2))
+```
+
+We can make the following observations based on the rules that the above inspections give us:
+
+  * The {curd, yogurt} => {whole milk} rule has the highest life for milk and a very high confidence. This can be attributed to the natural practice of buying dairy items together. This happens due to a combination of similar 'lifecycles' of dairy product consumption as well as the proximity placement of dairy items, compelling customers to buy generic dairy items at the same time
+  
+  * Whole milk is a very common 'consequent' which indicates that any rule with Whole milk or products that usually associate well with Whole milk, are part of high confidence rules
+  
+  * The ubiquity of basic groceries is apparent in the rules with vegetables as well. The category 'other vegetables' features quite frequently in 'antecedents' including 'root vegetables' and 'tropical fruit'
